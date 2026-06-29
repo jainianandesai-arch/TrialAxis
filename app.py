@@ -98,6 +98,11 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
     padding: 1.25rem 1.5rem;
     border: 1px solid #E5E7EB;
     box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    height: 145px;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
 }
 .metric-label { font-size: 0.72rem; font-weight: 600; color: #6B7280; text-transform: uppercase; letter-spacing: 0.06em; }
 .metric-value { font-size: 2rem; font-weight: 700; color: #0F2942; line-height: 1.1; margin-top: 0.2rem; }
