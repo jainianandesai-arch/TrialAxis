@@ -98,11 +98,6 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
     padding: 1.25rem 1.5rem;
     border: 1px solid #E5E7EB;
     box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-    height: 145px;
-    box-sizing: border-box;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
 }
 .metric-label { font-size: 0.72rem; font-weight: 600; color: #6B7280; text-transform: uppercase; letter-spacing: 0.06em; }
 .metric-value { font-size: 2rem; font-weight: 700; color: #0F2942; line-height: 1.1; margin-top: 0.2rem; }
@@ -255,14 +250,18 @@ def risk_badge(risk):
 def build_trial_context():
     """Build a rich text context of all trials for Claude"""
     context = "TMF INTELLIGENCE SYSTEM — TRIAL DATABASE\n\n"
-    for nct, t in TRIALS.items():
+    for tax_id, t in TRIALS.items():
         context += f"{'='*60}\n"
-        context += f"STUDY: {t['short_name']} ({nct})\n"
+        context += f"TAX STUDY ID: {tax_id}\n"
+        context += f"STUDY NAME: {t['short_name']}\n"
+        context += f"PROTOCOL NUMBER: {t.get('protocol_no', 'N/A')}\n"
+        context += f"NCT ID: {t.get('nct_id', 'N/A')}\n"
+        context += f"EUDRACT: {t.get('eudract', 'N/A')}\n"
         context += f"Drug: {t['drug']} | Sponsor: {t['sponsor']}\n"
         context += f"Phase: {t['phase']} | Condition: {t['condition']}\n"
         context += f"Design: {t['design']} | Duration: {t['duration']}\n"
         context += f"Countries: {', '.join(t['countries'])}\n"
-        context += f"Protocol Date: {t['protocol_date']} | Latest: {t['latest_amendment']} ({t['latest_amendment_date']})\n"
+        context += f"Protocol Date: {t['protocol_date']} | Latest Amendment: {t['latest_amendment']} ({t['latest_amendment_date']})\n"
         if t.get('patients_screened'):
             context += f"Patients Screened: {t['patients_screened']} | Randomized: {t.get('patients_randomized', 'N/A')}\n"
         context += f"\nPRIMARY OBJECTIVE: {t['primary_objective']}\n"
@@ -834,7 +833,7 @@ elif module == "🚨 Flags Dashboard":
     severity_filter = st.multiselect("Filter by severity", ["Critical", "Warning"], default=["Critical", "Warning"])
 
     all_flags = []
-    for nct, t in TRIALS.items():
+    for tax_id, t in TRIALS.items():
         for doc, info in t['tmf_documents'].items():
             if info['status'] in ["Missing", "Expired"] and "Critical" in severity_filter:
                 all_flags.append({
@@ -872,7 +871,7 @@ elif module == "🚨 Flags Dashboard":
         st.dataframe(styled_flags, use_container_width=True, hide_index=True)
 
         st.markdown('<div class="section-header">By Study</div>', unsafe_allow_html=True)
-        for nct, t in TRIALS.items():
+        for tax_id, t in TRIALS.items():
             crit, warn = count_flags(t)
             if (crit > 0 and "Critical" in severity_filter) or (warn > 0 and "Warning" in severity_filter):
                 with st.expander(f"{t['drug']} — {t['short_name']}  |  {crit} critical · {warn} warnings"):
@@ -936,14 +935,40 @@ elif module == "💬 Query Studies":
             st.rerun()
 
     if ask_clicked and query.strip():
-        st.session_state["active_query"] = query  # persist before rerun
+        st.session_state["active_query"] = query
         with st.spinner("Claude is reading the protocols..."):
             trial_context = build_trial_context()
-            system_prompt = f"""You are a clinical trial intelligence assistant for TrialAxis CRO, a specialized GI CRO.
-You have deep knowledge of the following clinical trial protocols from the TMF database.
-Answer questions accurately and concisely based on the trial data provided.
+
+            # Route: protocol-content questions → ChromaDB / query_engine
+            # Portfolio questions (status, flags, completeness) → trial_data context
+            content_keywords = ["endpoint","objective","inclusion","exclusion","criteria",
+                                 "dose","dosing","randomiz","blinded","placebo","primary",
+                                 "secondary","pharmacok","safety","efficacy","visit","schedule"]
+            use_chromadb = any(kw in query.lower() for kw in content_keywords)
+
+            if use_chromadb:
+                try:
+                    from query_engine import query_trials
+                    answer = query_trials(query, conversation_history=[])
+                    st.session_state.query_history.append({"q": query, "a": answer, "source": "protocol"})
+                    st.session_state["active_query"] = query
+                    st.rerun()
+                except Exception:
+                    pass  # fall through to portfolio query below
+
+            system_prompt = f"""You are a clinical trial intelligence assistant for TrialAxis CRO.
+You have access to the TMF portfolio database below.
+
+CRITICAL IDENTIFIER RULES:
+- TAX Study ID (e.g. TAX-2026-001) is the internal TrialAxis registry key.
+- Protocol Number (e.g. APD334-210) is the sponsor's protocol identifier.
+- NCT ID (e.g. NCT04607837) is the ClinicalTrials.gov identifier.
+- Do NOT confuse TAX Study ID with Protocol Number — they are different fields.
+- When asked for a protocol number, return the Protocol Number field, not the TAX Study ID.
+- Always cite both the study name and TAX Study ID when referencing data.
+
+Answer questions accurately based on the trial data provided.
 When comparing studies, use tables where helpful.
-Always cite the study name and NCT ID when referencing specific data.
 
 TRIAL DATABASE:
 {trial_context}"""
@@ -956,8 +981,7 @@ TRIAL DATABASE:
                 messages=[{"role": "user", "content": query}]
             )
             answer = response.content[0].text
-            st.session_state.query_history.append({"q": query, "a": answer})
-            # Keep query visible after submission
+            st.session_state.query_history.append({"q": query, "a": answer, "source": "portfolio"})
             st.session_state["active_query"] = query
 
     if st.session_state.query_history:
