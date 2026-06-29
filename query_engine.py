@@ -176,7 +176,7 @@ def query_trials(question: str, conversation_history: list = None) -> str:
     relevant_chunks = semantic_search(question, top_k=8)
     context = build_context_from_chunks(relevant_chunks)
 
-    # If nothing found, fall back to all summaries
+    # If nothing found in ChromaDB or JSON index, say so clearly but helpfully
     if not context:
         all_chunks = _load_json_index()
         summaries = ""
@@ -185,7 +185,15 @@ def query_trials(question: str, conversation_history: list = None) -> str:
             if c["tax_id"] not in seen and c.get("summary"):
                 summaries += f"\n{c['short_name']} ({c['tax_id']}): {c['summary']}\n"
                 seen.add(c["tax_id"])
-        context = summaries or "No trial data available. Please run setup_data.py first."
+        if summaries:
+            context = summaries
+        else:
+            # No index at all — return a clean message, don't pass to Claude
+            return (
+                "Protocol content has not been indexed yet. "
+                "Please run `python setup_data.py` from the project root to index all protocols, "
+                "then retry your query."
+            )
 
     system_prompt = """You are a clinical trial intelligence assistant for TrialAxis CRO, a specialized GI CRO based in North America.
 
